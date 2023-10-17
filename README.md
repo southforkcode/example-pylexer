@@ -1,4 +1,4 @@
-# example-pylexer
+# example-pylexer: A demonstration of a basic lexer
 
 This project illustrates how to write a file or string stream based lexer. A lexer will break the stream into tokens of different types based on the lexer rules.
 
