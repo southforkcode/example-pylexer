@@ -11,6 +11,9 @@ def ISLOWER(c: str): return c >= 'a' and c <= 'z'
 def ISUPPER(c: str): return c >= 'A' and c <= 'Z'
 def ISALPHA(c: str): return ISLOWER(c) or ISUPPER(c)
 def ISALNUM(c: str): return ISALPHA(c) or ISDIGIT(c)
+def ISBIN(c: str): return c == '0' or c == '1'
+def ISHEX(c: str): return ISDIGIT(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F')
+def ISOCT(c: str): return c >= '0' and c <= '7'
 
 # this is a little helper function which takes a function
 # and returns the boolean inverse, i.e. "not" of the input
@@ -29,7 +32,8 @@ class Token(object):
     #
     T_ID = 1
     T_INT = 2
-    T_PUNCT = 3
+    T_FLOAT = 3
+    T_PUNCT = 10
 
     @classmethod
     def Punct(cls, text: str): return Token(Token.T_PUNCT, text)
@@ -52,10 +56,16 @@ class LexerReader(object):
             raise ValueError(f"input must be of type io.TextIOWrapper, not {type(input).__name__}")
         
     def is_eos(self):
-        return self.peek() == None
+        return self.peek() == None    
         
     def tell(self):
         return self._s.tell()
+    
+    def rewind(self, count=1):
+        self.move(-count)
+
+    def move(self, count=1):
+        self._s.seek(self._s.tell()+count, io.SEEK_SET)
     
     def peek(self, offset=0, count=1):
         """Reads a character without changing stream position"""
@@ -110,16 +120,14 @@ class Lexer(object):
             if start_pos == self._ls.tell():
                 break # we didn't read any whitespace or comments
 
-        # done skipping inconsequential text
-        if self._ls.is_eos():
-            return None # we are done
-
         # now start matching token types
 
         # let's peek the next two characters - the second character
         # helps us detect different token types that happen to begin
         # with the same first character, e.g., 0x vs. 0b
         c0 = self._ls.peek(0)
+        if c0 == '': return None # done
+
         c1 = self._ls.peek(1)
 
         # identifier? [_azAZ][_azAZ09]*
@@ -127,10 +135,91 @@ class Lexer(object):
             id_text = self._ls.read_while(ISALNUM)
             return Token(Token.T_ID, id_text)
         
-        if c0 in ['@','(', ')', '[', ']', '{', '}']: return Token.Punct(self._ls.read(1))
+        # numbers are fun... and messy
+        # use helpers to make things clean, e.g., "read_hex"
+        if c0 == '0' and (c1 == 'x' or c1 == 'X'): return self.read_hex(self._ls.read(2))
+        if c0 == '0' and (c1 == 'b' or c1 == 'B'): return self.read_bin(self._ls.read(2))
+        # if initial zero and a decimal point does not follow,
+        # then it MUST be octal, e.g., 07
+        if c0 == '0' and c1 != '.': return self.read_oct(self._ls.read(1))
 
+        # now decimal integers and floats, again we use helpers
+        # because an integer value can escalate to a float
+        if ISDIGIT(c0): return self.read_num()
+
+        # check multi-char symbols
+        if c0 == '=' and c1 == '=': return Token.Punct(self._ls.read(2))
+        if c0 == '!' and c1 == '=': return Token.Punct(self._ls.read(2))
+        if c0 == '>' and c1 == '=': return Token.Punct(self._ls.read(2))
+        if c0 == '<' and c1 == '=': return Token.Punct(self._ls.read(2))
+
+        # check single char symboles
+        if c0 in ['(', ')', '[', ']', '{', '}']: return Token.Punct(self._ls.read(1))
+        if c0 in ['^', '%', '-', '+', '/', '*']: return Token.Punct(self._ls.read(1))
+        if c0 in ['&', '|', '!', '<', '>']: return Token.Punct(self._ls.read(1))
+        if c0 in ['@', ':', '=']: return Token.Punct(self._ls.read(1))
+
+        # we reached a character that doesn't make sense to start any token
+        if str.isprintable(c0):
+            raise ValueError(f"unexpected character: '{c0}' ({ord(c0)})")
+        else:
+            raise ValueError(f"unexpected character: ({ord(c0)})")
+            
+    def read_hex(self, prefix: str) -> Token:
+        hval = self._ls.read_while(ISHEX)
+        if len(hval) == 0: raise ValueError("hex literal invalid")
+        return Token(Token.T_INT, hval, prefix+hval, int(hval, 16))
+    
+    def read_bin(self, prefix: str) -> Token:
+        bval = self._ls.read_while(ISBIN)
+        if len(bval) == 0: raise ValueError("binary literal invalid")
+        return Token(Token.T_INT, bval, prefix+bval, int(bval, 2))
+    
+    def read_oct(self, prefix: str) -> Token:
+        oval = self._ls.read_while(ISOCT)
+        # we don't check length, because 0, the prefix, is valid by itself!
+        return Token(Token.T_INT, prefix+oval, prefix+oval, int(prefix+oval, 8))
+    
+    def read_num(self) -> Token:
+        ival = self._ls.read_while(ISDIGIT)
+        # we are guaranteed to pass the following check, so commented out
+        # but left in code so that you can convince yourself of this fact.
+        #if len(ival) == 0: raise ValueError("integer literal invalid")
         
-        return None
+        # check if we are a float... this can happen a couple of ways
+        c = self._ls.peek(0)
+        if c == '.': return self.read_float(ival + self._ls.read(1))
+        if c == 'e' or c == 'E': return self.read_exp(ival + self._ls.read(1))
+
+        # otherwise we must just be an integer
+        return Token(Token.T_INT, ival, ival, int(ival, 10))
+    
+    def read_float(self, prefix:str) -> Token:
+        dval = self._ls.read_while(ISDIGIT)
+        # actually don't care if there isn't a digit after the decimal point
+        # but if you did care, you could assert that here by uncommenting the
+        # following line:
+        # if len(dval) == 0: raise ValueError("float literal invalid - nothing after the decimal")
+        
+        # check for exponent
+        c = self._ls.peek(0)
+        if c == 'e' or c== 'E': return self.read_exp(prefix + dval + self._ls.read(1))
+
+        # otherwise we are a float without an exponent clause
+        return Token(Token.T_FLOAT, prefix+dval, prefix+dval, float(prefix+dval))
+    
+    def read_exp(self, prefix:str) -> Token:
+        # first check for - or + following the "e"
+        c = self._ls.peek(0)
+        if c == '-' or c == '+': exp = self._ls.read(1)
+        else: exp = ""
+        # now read the exponent
+        eval = self._ls.read_while(ISDIGIT)
+        # we do require digits here
+        if len(eval) == 0: raise ValueError("invalid exponent in float literal")
+        # otherwise, we are good, and... done!
+        return Token(Token.T_FLOAT, prefix+exp+eval, prefix+exp+eval, float(prefix+exp+eval))
+        
 
 
                 

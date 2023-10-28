@@ -1,2 +1,14 @@
 
-segment low @ $8000
+segment low @ 0x8000:04
+
+def foo 0b001
+
+def pi 3.1415
+
+def r 0.1345e+2
+def s 10e-1
+def t 1.12e2
+
+
+
+
