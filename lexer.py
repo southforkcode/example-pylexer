@@ -29,6 +29,10 @@ class Token(object):
     #
     T_ID = 1
     T_INT = 2
+    T_PUNCT = 3
+
+    @classmethod
+    def Punct(cls, text: str): return Token(Token.T_PUNCT, text)
 
     def __init__(self, token_id: int, text: str, raw_text=None, value=None):
         self.token_id = token_id
@@ -41,15 +45,11 @@ class Token(object):
 
 
 class LexerReader(object):    
-    def __init__(self, input: io.BufferedReader|str):
-        if type(input) is str:
-            self._s = io.StringIO(input)
-        elif type(input) is io.BufferedReader:
+    def __init__(self, input: io.TextIOWrapper):
+        if type(input) is io.TextIOWrapper:
             self._s = input
-        elif type(input) is io.TextIOWrapper:
-            raise ValueError(f"input must be of type str or io.BufferedReader. Use mode='rb' for files.")
         else:
-            raise ValueError(f"input must be of type str or io.TextIOWrapper, not {type(input).__name__}")
+            raise ValueError(f"input must be of type io.TextIOWrapper, not {type(input).__name__}")
         
     def is_eos(self):
         return self.peek() == None
@@ -60,9 +60,9 @@ class LexerReader(object):
     def peek(self, offset=0, count=1):
         """Reads a character without changing stream position"""
         pos = self._s.tell()
-        self._s.seek(offset, io.SEEK_CUR)
+        self._s.seek(pos+offset, io.SEEK_SET)
         c = self._s.read(count)
-        self._s.seek(pos)
+        self._s.seek(pos, io.SEEK_SET)
         return c
     
     def skip(self, count=1):
@@ -126,6 +126,9 @@ class Lexer(object):
         if ISALPHA(c0) or c0 == '_':
             id_text = self._ls.read_while(ISALNUM)
             return Token(Token.T_ID, id_text)
+        
+        if c0 in ['@','(', ')', '[', ']', '{', '}']: return Token.Punct(self._ls.read(1))
+
         
         return None
 
