@@ -1,13 +1,22 @@
+// this is a made-up language to exercise the lexer
 
 segment low @ 0x8000:04
 
 def foo 0b001
-
 def pi 3.1415
-
+def bobbles 2f // gasp this is actually a float, i.e., 2.0!
+def hobbles 2.3i // gasp this is actually an integer, 2
 def r 0.1345e+2
 def s 10e-1
 def t 1.12e2
+
+print("foo!")
+// string literal with escape codes
+print("\tfoo\n!")
+// raw string literal
+print(r"\t")
+
+
 
 
 

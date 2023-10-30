@@ -33,6 +33,7 @@ class Token(object):
     T_ID = 1
     T_INT = 2
     T_FLOAT = 3
+    T_STR = 4
     T_PUNCT = 10
 
     @classmethod
@@ -107,7 +108,6 @@ class Lexer(object):
         # skip initial whitespace and comments
         
         while True:
-
             start_pos = self._ls.tell()
         
             # skip while ISWS returns True for subsequent
@@ -130,11 +130,6 @@ class Lexer(object):
 
         c1 = self._ls.peek(1)
 
-        # identifier? [_azAZ][_azAZ09]*
-        if ISALPHA(c0) or c0 == '_':
-            id_text = self._ls.read_while(ISALNUM)
-            return Token(Token.T_ID, id_text)
-        
         # numbers are fun... and messy
         # use helpers to make things clean, e.g., "read_hex"
         if c0 == '0' and (c1 == 'x' or c1 == 'X'): return self.read_hex(self._ls.read(2))
@@ -146,6 +141,16 @@ class Lexer(object):
         # now decimal integers and floats, again we use helpers
         # because an integer value can escalate to a float
         if ISDIGIT(c0): return self.read_num()
+
+        # now strings and chars
+
+
+        # single line string (non-breaking)
+        if (c0 == 'r' or c0 == 'R') and c1 == '\"': return self.read_str(self._ls.read(2), c1, is_raw=True)
+        if c0 == '\"': return self.read_str(self._ls.read(1), c0)
+
+        # let's do character values -- it's really just an int
+        if c0 == '\'': return self.read_char()
 
         # check multi-char symbols
         if c0 == '=' and c1 == '=': return Token.Punct(self._ls.read(2))
@@ -159,6 +164,11 @@ class Lexer(object):
         if c0 in ['&', '|', '!', '<', '>']: return Token.Punct(self._ls.read(1))
         if c0 in ['@', ':', '=']: return Token.Punct(self._ls.read(1))
 
+        # identifier? [_azAZ][_azAZ09]*
+        if ISALPHA(c0) or c0 == '_':
+            id_text = self._ls.read_while(ISALNUM)
+            return Token(Token.T_ID, id_text)
+        
         # we reached a character that doesn't make sense to start any token
         if str.isprintable(c0):
             raise ValueError(f"unexpected character: '{c0}' ({ord(c0)})")
@@ -212,16 +222,69 @@ class Lexer(object):
         # first check for - or + following the "e"
         c = self._ls.peek(0)
         if c == '-' or c == '+': exp = self._ls.read(1)
-        else: exp = ""
+        else: exp = "" # if nothing, it'll be converted as if it were a +
         # now read the exponent
         eval = self._ls.read_while(ISDIGIT)
         # we do require digits here
         if len(eval) == 0: raise ValueError("invalid exponent in float literal")
         # otherwise, we are good, and... done!
         return Token(Token.T_FLOAT, prefix+exp+eval, prefix+exp+eval, float(prefix+exp+eval))
+    
+    def read_str(self, prefix: str, qch: str, allow_lbrk=False, is_raw=False):
+        sval = "" # the string value
+        # greedy read
+        while (c := self._ls.read(1)):
+            if not allow_lbrk and ISEOL(c): raise ValueError("unterminated string")
+            elif c == '\\' and not is_raw: sval += self.read_escape_seq(c)
+            elif c == qch: return Token(Token.T_STR, qch+sval+c, qch+sval+c, sval)
+            else:
+                sval += c                
+        # this is an error - unterminated string
+        raise ValueError("unterminated string")
+    
+    def read_escape_seq(self, esc_char):
+        # we could have different kinds of escapes, we'll assume the \\ backslash variety
+        # also we will unescape them on the return.
+        # TODO: consider doing the unescaping later??
+        if esc_char != '\\': raise ValueError("illegal escape character")
         
+        # greedy read
+        c = self._ls.read(1)
 
+        # don't be confused about the return values. you could imagine just a character code
+        # being returned... but python already implements the standard set, so we are just
+        # doing the conversion using python's core functionality
 
-                
+        # \\ == \
+        if c == '\\': return '\\'
+        # \n == LINEFEED
+        if c == 'n': return '\n'
+        # \t == TAB
+        if c == 't': return '\t'
+        # \r == CARRIAGE RETURN
+        if c == 'r': return '\r'
+        # \b == BACKSPACE
+        if c == 'b': return '\b'
+        # \" == double quote
+        if c == '\"': return '\"'
 
+        # now add support for numeric escape codes \0{oct} \x{hex} \{dec}
+
+        # 0 is octal char value
+        if c == '0':
+            oval = c + self._ls.read_while(ISOCT)
+            return chr(int(oval,8)) 
+        # x or X is a hexadecimal char value
+        if c == 'x' or c == 'X':
+            hval = c + self._ls.read_while(ISHEX)
+            if len(hval) == 0: return '' # TODO: add support emitting a warning instead of swallowing this error            
+            return chr(int(hval,16))
+        
+        # decimal digit is a integer char value
+        if ISDIGIT(c):
+            dval = c + self._ls.read_while(ISDIGIT)
+            # no error check... there can't be an error because initial char, c, is a digit
+            return chr(int(dval, 10))
+        
+        
 
