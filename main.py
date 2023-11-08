@@ -3,6 +3,7 @@
 # 
 
 import sys
+import io
 from lexer import Lexer
 
 def lex_file(file_name: str):
@@ -28,6 +29,8 @@ if __name__ == '__main__':
     while(True):
         try:
             line = input("user> ")
+            line_ss = io.StringIO(line)
+            lex_file(line_ss)
         except EOFError:
             break
     print("Good-bye.")
